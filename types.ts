@@ -2,6 +2,8 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
+import type { ModuleProgress, ModuleSummary } from './despacho';
+
 export type Language = 'en' | 'es';
 
 export enum BuildingType {
@@ -83,6 +85,8 @@ export interface UserProgress {
   totalScore: number;
   level: number;
   completedChallenges: string[];
+  moduleProgress?: Partial<Record<string, ModuleProgress>>;
+  playerHistory?: ModuleSummary[];
 }
 
 export interface SaveSlot {

@@ -47,7 +47,7 @@ interface UIOverlayProps {
   gameMode: GameMode;
   onToggleMode: () => void;
   onBuyFuel: () => void;
-  currentTask: { text: string, target: number, current: number } | null;
+  currentTask: { text: string, target: number, current: number, orderId?: string, module?: string, skuLines?: string[] } | null;
   tutorialStep: number | null;
   onSave: () => void;
   onExit: () => void;
@@ -508,6 +508,13 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
                 {!isTaskCollapsed && (
                   <div className="p-4">
                     <p className="text-sm font-medium text-slate-100 mb-3">"{currentTask.text}"</p>
+                    {currentTask.skuLines && (
+                      <div className="mb-3 space-y-1 border border-slate-700 rounded-lg p-2 bg-slate-950/50">
+                        {currentTask.skuLines.map(line => (
+                          <div key={line} className="text-[9px] font-mono text-slate-300 truncate">{line}</div>
+                        ))}
+                      </div>
+                    )}
                     <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
                       <motion.div 
                         className="bg-yellow-500 h-full"
@@ -921,6 +928,13 @@ const UIOverlay: React.FC<UIOverlayProps> = ({
                 {!isTaskCollapsed && (
                   <div className="p-3">
                     <p className="text-xs font-medium text-slate-100 mb-2">"{currentTask.text}"</p>
+                    {currentTask.skuLines && (
+                      <div className="mb-2 space-y-1 border border-slate-700 rounded-lg p-1.5 bg-slate-950/50 max-h-20 overflow-y-auto">
+                        {currentTask.skuLines.map(line => (
+                          <div key={line} className="text-[8px] font-mono text-slate-300 truncate">{line}</div>
+                        ))}
+                      </div>
+                    )}
                     <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                       <motion.div 
                         className="bg-yellow-500 h-full"

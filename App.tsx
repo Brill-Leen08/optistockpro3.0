@@ -12,7 +12,18 @@ import StartScreen from './components/StartScreen';
 import { auth, signOut, db, doc, getDoc, setDoc, addDoc, serverTimestamp, collection, onAuthStateChanged, updateProfile, signInAnonymously } from './firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import MobileControls from './components/MobileControls';
-
+import {
+  startModule,
+  ModuleType,
+  HelpLevel,
+  Mission,
+  MissionProgress,
+  createMissionProgress,
+  registerPalletPickup,
+  registerPalletDropoff,
+  getPendingSkuLines
+} from "./despacho";
+//import { registerProcessedProduct } from "./despacho";
 const createInitialGrid = (): Grid => {
   const grid: Grid = [];
   for (let y = 0; y < GRID_SIZE; y++) {
@@ -40,12 +51,20 @@ function App() {
   const [gameMode, setGameMode] = useState<GameMode>(GameMode.Design);
   const [currentSlotId, setCurrentSlotId] = useState<number | null>(null);
   const [tutorialStep, setTutorialStep] = useState<number>(0);
-
-  const [grid, setGrid] = useState<Grid>(createInitialGrid);
+const [activeMission, setActiveMission] = useState<Mission | null>(null);
+const [palletAssignments, setPalletAssignments] = useState(new Map<string, string>());
+  const [missionProgress, setMissionProgress] = useState<MissionProgress | null>(null);
+const [grid, setGrid] = useState<Grid>(createInitialGrid);
   const [stats, setStats] = useState<WarehouseStats>(INITIAL_STATS);
   const [selectedTool, setSelectedTool] = useState<BuildingType>(BuildingType.Floor);
   const [newsFeed, setNewsFeed] = useState<NewsItem[]>([]);
-  const [currentTask, setCurrentTask] = useState<{ text: string, target: number, current: number, challengeId?: string } | null>(null);
+  const [currentTask, setCurrentTask] = useState<{
+  text: string;
+  target: number;
+  current: number;
+  challengeId?: string;
+  skuLines?: string[];
+} | null>(null);
   const [xpGain, setXpGain] = useState<{ amount: number, id: number } | null>(null);
   const [moneyGain, setMoneyGain] = useState<{ amount: number, id: number } | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
@@ -456,6 +475,32 @@ function App() {
   useEffect(() => {
     localStorage.setItem('optistock_save_slots', JSON.stringify(saveSlots));
   }, [saveSlots]);
+  // --- Sincronización de progreso de misión (Despacho) ---
+  useEffect(() => {
+    if (!activeMission || !missionProgress) return;
+    // Solo afecta a la tarea de despacho (identificada por tener skuLines)
+    if (!currentTask || !currentTask.skuLines) return;
+
+    if (currentTask.current !== missionProgress.processedProducts) {
+      setCurrentTask(prev =>
+        prev
+          ? {
+              ...prev,
+              current: missionProgress.processedProducts,
+              skuLines: getPendingSkuLines(activeMission, missionProgress)
+            }
+          : prev
+      );
+    }
+
+    if (missionProgress.completed) {
+      setCurrentTask(null);
+      addNewsItem(tMsg.taskCompleted, 'positive', 'Controller');
+      setStats(s => ({ ...s, money: s.money + 500, score: s.score + 200 }));
+      setMoneyGain({ amount: 500, id: Date.now() });
+      playCoinSound();
+    }
+  }, [missionProgress, activeMission, currentTask, addNewsItem, tMsg, playCoinSound]);
 
   const handleTileClick = useCallback((x: number, y: number) => {
     if (!gameStarted) return;
@@ -551,6 +596,28 @@ function App() {
       setForkliftPos({ x: spawnX, y: spawnY });
       setForksLevel(0);
       setCarryingPallet(false);
+      if (mode !== GameMode.Tutorial) {
+
+  const mission = startModule(
+    ModuleType.DESPACHO,
+    HelpLevel.GUIADO,
+    5
+  );
+
+  setActiveMission(mission);
+  setMissionProgress(createMissionProgress(mission));
+  setCurrentTask({
+  text: `Pedido ${mission.order.id}`,
+  target: mission.order.products.length,
+  current: 0,
+  skuLines: mission.order.products.map(
+    p => `${p.sku} - ${p.name} x${p.quantity}`
+  )
+});
+
+  console.log("MISSION:", mission);
+console.log("PRODUCTOS:", mission.order.products);
+}
       
       if (mode === GameMode.Tutorial) {
         setTutorialStep(0);
@@ -592,12 +659,27 @@ function App() {
     setPalletsSpawned(0);
     setChallengeTimer(challenge.timeLimit);
     const challengeTitle = translations[language].challenges[`${challenge.id}Title` as keyof typeof translations['en']['challenges']] || challenge.title;
-    setCurrentTask({
-      text: tMsg.missionCurrent.replace('{title}', challengeTitle).replace('{target}', challenge.targetPallets.toString()),
-      target: challenge.targetPallets,
-      current: 0,
-      challengeId: challenge.id
-    });
+    if (activeMission) {
+
+  setCurrentTask({
+    text: `Pedido ${activeMission.order.id}`,
+    target: activeMission.order.products.length,
+    current: 0,
+    challengeId: challenge.id
+  });
+
+} else {
+
+  setCurrentTask({
+    text: tMsg.missionCurrent
+      .replace('{title}', challengeTitle)
+      .replace('{target}', challenge.targetPallets.toString()),
+    target: challenge.targetPallets,
+    current: 0,
+    challengeId: challenge.id
+  });
+
+}
     setGameMode(GameMode.Forklift);
     addNewsItem(tMsg.missionInit.replace('{id}', challenge.id).replace('{target}', challenge.targetPallets.toString()), 'mission', 'Controller');
   };
@@ -662,12 +744,38 @@ function App() {
       if ((tile.buildingType === BuildingType.Floor || tile.buildingType === BuildingType.LoadingBay || tile.buildingType === BuildingType.None) && pallets[0] && level === 0) {
         setCarryingPallet(true);
         const newGrid = currentGrid.map(row => [...row]);
+        if (activeMission && missionProgress) {
+          setMissionProgress(prev =>
+            prev ? registerPalletPickup(prev, "carried-pallet") : prev
+          );
+        }
         newGrid[tileY][tileX] = { ...tile, pallets: [false, false, false] };
         setGrid(newGrid);
         playPickSound();
         addNewsItem(tMsg.palletPickedFloor, 'neutral');
       } else if (tile.buildingType === BuildingType.HeavyRack && pallets[level]) {
         setCarryingPallet(true);
+        if (activeMission) {
+  const palletKey = `${tileX}-${tileY}-${level}`;
+
+  if (!palletAssignments.has(palletKey)) {
+    const randomProduct =
+      activeMission.order.products[
+        Math.floor(Math.random() * activeMission.order.products.length)
+      ];
+
+    setPalletAssignments(prev => {
+      const next = new Map(prev);
+      next.set(palletKey, randomProduct.sku);
+      return next;
+    });
+  }
+  if (activeMission && missionProgress) {
+          setMissionProgress(prev =>
+            prev ? registerPalletPickup(prev, "carried-pallet") : prev
+          );
+        }
+}
         const newGrid = currentGrid.map(row => [...row]);
         const newPallets = [...pallets];
         newPallets[level] = false;
@@ -702,6 +810,11 @@ function App() {
           // Dispatch logic
           setCarryingPallet(false);
           setStats(prev => ({ ...prev, score: prev.score + 100, money: prev.money + 50 }));
+          if (activeMission && missionProgress) {
+            setMissionProgress(prev =>
+              prev ? registerPalletDropoff(prev, "carried-pallet", "DESPACHO") : prev
+            );
+          }
           setMoneyGain({ amount: 50, id: Date.now() });
           playCoinSound();
           playDropSound();
@@ -758,6 +871,11 @@ function App() {
         newPallets[level] = true;
         newGrid[tileY][tileX] = { ...tile, pallets: newPallets };
         setGrid(newGrid);
+        if (activeMission && missionProgress) {
+          setMissionProgress(prev =>
+            prev ? registerPalletDropoff(prev, "carried-pallet", "RACK") : prev
+          );
+        }
         
         setStats(prev => ({ ...prev, score: prev.score + 50, money: prev.money + 20 }));
         setMoneyGain({ amount: 20, id: Date.now() });
@@ -784,6 +902,11 @@ function App() {
         }
       } else if (tile.buildingType === BuildingType.Truck) {
         setCarryingPallet(false);
+        if (activeMission && missionProgress) {
+          setMissionProgress(prev =>
+            prev ? registerPalletDropoff(prev, "carried-pallet", "CAMION") : prev
+          );
+        }
         setStats(prev => ({ ...prev, score: prev.score + 100, money: prev.money + 50 }));
         setMoneyGain({ amount: 50, id: Date.now() });
         playCoinSound();
@@ -807,7 +930,7 @@ function App() {
         addNewsItem(tMsg.cannotDrop, 'negative');
       }
     }
-  }, [carryingPallet, addNewsItem, currentTask, forksLevel, playDropSound, playPickSound, playCoinSound, playLevelUpSound, tMsg, activeChallenge, challengeTimer]);
+  }, [carryingPallet, addNewsItem, currentTask, forksLevel, playDropSound, playPickSound, playCoinSound, playLevelUpSound, tMsg, activeChallenge, challengeTimer,activeMission, missionProgress]);
 
   return (
     <div className="relative w-[100dvw] h-[100dvh] overflow-hidden selection:bg-transparent selection:text-transparent bg-slate-900">
