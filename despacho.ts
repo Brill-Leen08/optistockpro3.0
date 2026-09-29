@@ -19,6 +19,7 @@ export enum HelpLevel {
 
     GUIADO = 1,
 
+    SUGERENCIA = 2,
 
     LIBRE = 3
 
